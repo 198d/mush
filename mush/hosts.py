@@ -1,0 +1,174 @@
+import os
+import pwd
+import asyncio
+import logging
+import itertools
+from fnmatch import fnmatch
+from collections import UserDict, UserList
+
+from mush.processes import Process, ProcessSet
+
+
+class BaseHost(UserDict):
+    def __init__(self, user=None, hostname=None, meta=None, loop=None):
+        self.user = user or pwd.getpwuid(os.getuid()).pw_name
+        self.hostname = hostname or 'localhost'
+
+        super().__init__(meta)
+
+        self.loop = (loop or asyncio.get_event_loop())
+        self.logger = logging.getLogger(self.__class__.__module__)
+
+    def __repr__(self):
+        return '<{} {}@{} {}>'.format(self.__class__.__name__, self.user,
+                                      self.hostname, self.meta)
+
+    def __call__(self, *args, **kwargs):
+        kwargs['loop'] = self.loop
+        return Process(self, *args, **kwargs)
+
+    def __getitem__(self, path):
+        try:
+            return self.data[path]
+        except KeyError:
+            pass
+
+        data = self.data
+        parts = path.split('.')
+
+        for key in parts:
+            try:
+                if isinstance(data, (list, tuple)):
+                    data = type(data)(map(lambda data: data[key], data))
+                else:
+                    data = data[key]
+            except (KeyError, IndexError, TypeError):
+                return None
+
+        return data
+
+    @asyncio.coroutine
+    def connect(self):
+        pass
+
+    def disconnect(self):
+        pass
+
+    @asyncio.coroutine
+    def exec_command(self, *args, **kwargs):
+        raise NotImplementedError()
+
+    def tagged(self, tag, *values):
+        if tag not in self.meta:
+            return False
+        elif tag in self.meta:
+            if not values and self.meta[tag]:
+                return True
+            elif not values and not self.meta[tag]:
+                return False
+            else:
+                tag_values = self.meta[tag]
+                if not isinstance(tag_values, list):
+                    tag_values = [tag_values]
+                for value in values:
+                    for tag_value in tag_values:
+                        if (not callable(value) and
+                                (isinstance(value, str) and
+                                 isinstance(tag_value, str) and
+                                 fnmatch(tag_value, value) or
+                                 tag_value == value)) or \
+                           (callable(value) and value(tag_value)):
+                            return True
+        return False
+
+
+class LocalHost(BaseHost):
+    connection = True
+
+    @asyncio.coroutine
+    def exec_command(self, command, **kwargs):
+        self.logger.debug("Exec'ing command: %s", command)
+
+        kwargs.setdefault('executable', pwd.getpwuid(os.getuid()).pw_shell)
+
+        return (yield from asyncio.create_subprocess_shell(
+            command, loop=self.loop, **kwargs))
+
+
+class RemoteHost(BaseHost):
+    default_ssh_options = {
+        'StrictHostKeyChecking': 'no'
+    }
+
+    def __init__(self, user=None, hostname=None, meta=None, ssh_options=None,
+                 loop=None):
+        super().__init__(user=user, hostname=hostname, meta=meta, loop=loop)
+
+        option_pairs = itertools.chain(self.default_ssh_options.items(),
+                                       (ssh_options or {}).items())
+        ssh_options = {option: value for option, value in option_pairs}
+        self.ssh_options = list(
+            itertools.chain.from_iterable(
+                zip(['-o'] * len(ssh_options),
+                    ['{} {}'.format(option, value)
+                     for option, value in ssh_options.items()])))
+
+    @asyncio.coroutine
+    def exec_command(self, command=None, **kwargs):
+        ssh_options = kwargs.pop('ssh_options', [])
+        command = self._ssh_command(args=[command or ''],
+                                    options=ssh_options)
+
+        self.logger.debug("Exec'ing command: %s", command)
+
+        return (yield from asyncio.create_subprocess_exec(
+            *command, loop=self.loop, **kwargs))
+
+    def _ssh_command(self, options=[], args=[]):
+        where = '{}@{}'.format(self.user, self.hostname)
+        return (['ssh'] + self.ssh_options + list(options) + [where, '--'] +
+                list(args))
+
+
+class HostSet(BaseHost, UserList):
+    def __init__(self, hosts, loop=None):
+        UserList.__init__(self, hosts)
+        self.hosts = hosts
+        self.loop = (loop or asyncio.get_event_loop())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        pass
+
+    @asyncio.coroutine
+    def map(self, func, *args, **kwargs):
+        return (yield from asyncio.gather(
+            *[func(host, *args, **kwargs) for host in self.hosts]))
+
+    @asyncio.coroutine
+    def connect(self, *args):
+        return (yield from asyncio.gather(
+            *[host.connect(*args) for host in self.hosts]))
+
+    def disconnect(self):
+        return list(host.disconnect() for host in self.hosts)
+
+    def __call__(self, *args, **kwargs):
+        return ProcessSet(
+            [host(*args, **kwargs) for host in self.hosts], loop=self.loop)
+
+    def tagged(self, *args):
+        return self.__class__(
+            [host for host in self.hosts if host.tagged(*args)], self.loop)
+
+    def where(self, func):
+        def safe_filter(host):
+            try:
+                return func(host)
+            except:
+                return False
+
+        return self.__class__(
+            [host for host in self.hosts if safe_filter(host)], self.loop)
