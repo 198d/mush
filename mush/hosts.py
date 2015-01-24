@@ -21,7 +21,7 @@ class BaseHost(UserDict):
 
     def __repr__(self):
         return '<{} {}@{} {}>'.format(self.__class__.__name__, self.user,
-                                      self.hostname, self.meta)
+                                      self.hostname, repr(self.data))
 
     def __call__(self, *args, **kwargs):
         kwargs['loop'] = self.loop
@@ -59,15 +59,15 @@ class BaseHost(UserDict):
         raise NotImplementedError()
 
     def tagged(self, tag, *values):
-        if tag not in self.meta:
+        if tag not in self:
             return False
-        elif tag in self.meta:
-            if not values and self.meta[tag]:
+        elif tag in self:
+            if not values and self[tag]:
                 return True
-            elif not values and not self.meta[tag]:
+            elif not values and not self[tag]:
                 return False
             else:
-                tag_values = self.meta[tag]
+                tag_values = self[tag]
                 if not isinstance(tag_values, list):
                     tag_values = [tag_values]
                 for value in values:
