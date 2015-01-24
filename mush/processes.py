@@ -26,6 +26,10 @@ class Process:
         self.running = False
         self.logger = logging.getLogger(self.__class__.__module__)
 
+    def __repr__(self):
+        return '<{} `{}` {}>'.format(
+            self.__class__.__name__, self.command, self.host)
+
     @asyncio.coroutine
     def __iter__(self):
         if self.running:
@@ -123,6 +127,9 @@ class ProcessSet(Process):
         self.exec_kwargs = kwargs
         self.running = False
         self.logger = logging.getLogger(self.__class__.__module__)
+
+    def __repr__(self):
+        return repr(self.processes)
 
     def connect(self, stdin):
         kwargs = self.exec_kwargs.copy()
