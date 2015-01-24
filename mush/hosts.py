@@ -133,7 +133,6 @@ class RemoteHost(BaseHost):
 class HostSet(BaseHost, UserList):
     def __init__(self, hosts, loop=None):
         UserList.__init__(self, hosts)
-        self.hosts = hosts
         self.loop = (loop or asyncio.get_event_loop())
 
     def __enter__(self):
@@ -142,26 +141,29 @@ class HostSet(BaseHost, UserList):
     def __exit__(self, *exc_info):
         pass
 
+    def __repr__(self):
+        return repr(self.data)
+
     @asyncio.coroutine
     def map(self, func, *args, **kwargs):
         return (yield from asyncio.gather(
-            *[func(host, *args, **kwargs) for host in self.hosts]))
+            *[func(host, *args, **kwargs) for host in self]))
 
     @asyncio.coroutine
     def connect(self, *args):
         return (yield from asyncio.gather(
-            *[host.connect(*args) for host in self.hosts]))
+            *[host.connect(*args) for host in self]))
 
     def disconnect(self):
-        return list(host.disconnect() for host in self.hosts)
+        return list(host.disconnect() for host in self)
 
     def __call__(self, *args, **kwargs):
         return ProcessSet(
-            [host(*args, **kwargs) for host in self.hosts], loop=self.loop)
+            [host(*args, **kwargs) for host in self], loop=self.loop)
 
     def tagged(self, *args):
         return self.__class__(
-            [host for host in self.hosts if host.tagged(*args)], self.loop)
+            [host for host in self if host.tagged(*args)], self.loop)
 
     def where(self, func):
         def safe_filter(host):
@@ -171,4 +173,4 @@ class HostSet(BaseHost, UserList):
                 return False
 
         return self.__class__(
-            [host for host in self.hosts if safe_filter(host)], self.loop)
+            [host for host in self if safe_filter(host)], self.loop)
