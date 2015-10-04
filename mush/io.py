@@ -3,24 +3,22 @@ import random
 from concurrent import futures
 
 
-@asyncio.coroutine
-def copy_string(string, destination):
+async def copy_string(string, destination):
     destination.write(string.encode())
-    yield from destination.drain()
+    await destination.drain()
     destination.write_eof()
-    yield from destination.drain()
+    await destination.drain()
 
 
-@asyncio.coroutine
-def copy_stream(source, destination, linewise=False):
+async def copy_stream(source, destination, linewise=False):
     while not source.at_eof():
         if linewise:
-            destination.write((yield from source.readline()))
+            destination.write(await source.readline())
         else:
-            destination.write((yield from source.read(4096)))
-        yield from destination.drain()
+            destination.write(await source.read(4096))
+        await destination.drain()
     destination.write_eof()
-    yield from destination.drain()
+    await destination.drain()
 
 
 class MultiStreamWriter:
@@ -35,10 +33,9 @@ class MultiStreamWriter:
         for writer in self.writers:
             writer.write(data)
 
-    @asyncio.coroutine
-    def drain(self):
+    async def drain(self):
         for writer in self.writers:
-            yield from writer.drain()
+            await writer.drain()
 
 
 class MultiStreamReader:
@@ -49,12 +46,20 @@ class MultiStreamReader:
     def __bool__(self):
         return not self.at_eof()
 
+    async def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        line = await self.readline()
+        if line:
+            return line
+        raise StopAsyncIteration
+
     def at_eof(self):
         return all([reader.at_eof() for reader in self.readers]) and \
             all([not any(tasks) for _, tasks in self.current_tasks.items()])
 
-    @asyncio.coroutine
-    def readline(self):
+    async def readline(self):
         current_tasks = self.current_tasks.setdefault(
             'readline', [None] * len(self.readers))
 
@@ -66,7 +71,7 @@ class MultiStreamReader:
         tasks = list(filter(None, current_tasks))
 
         if tasks:
-            done, pending = yield from asyncio.wait(
+            done, pending = await asyncio.wait(
                 tasks, return_when=futures.FIRST_COMPLETED)
         else:
             return b''
@@ -86,20 +91,27 @@ class HostStreamReader:
         self.host = host
         self.reader = reader
 
+    async def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        line = await self.readline()
+        if line:
+            return line
+        raise StopAsyncIteration
+
     def __bool__(self):
         return not self.at_eof()
 
     def at_eof(self):
         return self.reader.at_eof()
 
-    @asyncio.coroutine
-    def readline(self):
-        return HostBytes(self.host, (yield from self.reader.readline()))
+    async def readline(self):
+        return HostBytes(self.host, await self.reader.readline())
 
-    @asyncio.coroutine
-    def read(self, n=-1):
+    async def read(self, n=-1):
         return HostBytes(
-            self.host, (yield from self.reader.read(n)))
+            self.host, await self.reader.read(n))
 
 
 class HostBytes(bytearray):

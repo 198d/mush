@@ -30,16 +30,14 @@ class Process:
         return '<{} `{}` {}>'.format(
             self.__class__.__name__, self.command, self.host)
 
-    @asyncio.coroutine
-    def __iter__(self):
+    def __await__(self):
         if self.running:
-            return (yield from self.returncode)
-        return (yield from self())
+            return self.returncode.__await__()
+        return self().__await__()
 
-    @asyncio.coroutine
-    def __call__(self, **kwargs):
-        yield from self.exec_command(**kwargs)
-        return not (yield from self.returncode)
+    async def __call__(self, **kwargs):
+        await self.exec_command(**kwargs)
+        return not (await self.returncode)
 
     def __or__(self, other):
         return other.connect(self)
@@ -50,21 +48,19 @@ class Process:
         return self.__class__(self.host, self.command, self.throw,
                               self.combine, self.loop, **kwargs)
 
-    @asyncio.coroutine
-    def reduce(self, func, initializer=None):
+    async def reduce(self, func, initializer=None):
         value = initializer
-        stdout, stderr = yield from self.stream()
+        stdout, stderr = await self.stream()
 
         while stdout:
-            line = (yield from stdout.readline()).decode()
+            line = (await stdout.readline()).decode()
             if line:
                 value = func(value, line)
 
         return value
 
-    @asyncio.coroutine
-    def stream(self, **kwargs):
-        yield from self.exec_command(**kwargs)
+    async def stream(self, **kwargs):
+        await self.exec_command(**kwargs)
         return self
 
     @property
@@ -80,9 +76,8 @@ class Process:
         return HostStreamReader(self.host, self.process.stderr)
 
     @property
-    @asyncio.coroutine
-    def returncode(self):
-        returncode = yield from self.process.wait()
+    async def returncode(self):
+        returncode = await self.process.wait()
 
         if returncode and self.throw:
             raise CommandFailed(
@@ -91,16 +86,15 @@ class Process:
 
         return returncode
 
-    @asyncio.coroutine
-    def exec_command(self, **kwargs):
+    async def exec_command(self, **kwargs):
         exec_kwargs = self.prepare_kwargs(**kwargs)
 
         self.logger.debug("Exec'ing command with kwargs: %s", kwargs)
-        self.process = yield from self.host.exec_command(
+        self.process = await self.host.exec_command(
             self.command, **exec_kwargs)
         self.running = True
 
-        yield from self.stream_stdin(kwargs.get('stdin'))
+        await self.stream_stdin(kwargs.get('stdin'))
 
     def prepare_kwargs(self, **kwargs):
         exec_kwargs = self.exec_kwargs.copy()
@@ -108,16 +102,18 @@ class Process:
         exec_kwargs['stdin'] = subprocess.PIPE
         return exec_kwargs
 
-    def stream_stdin(self, stdin):
+    async def stream_stdin(self, stdin):
         stdin = stdin or self.exec_kwargs.get('stdin')
 
         self.logger.debug('Streaming stdin: %s', stdin)
         if isinstance(stdin, str):
-            asyncio.async(copy_string(stdin, self.stdin), loop=self.loop)
+            asyncio.ensure_future(copy_string(stdin, self.stdin),
+                                  loop=self.loop)
         elif isinstance(stdin, ProcessSet) or isinstance(stdin, Process):
-            stdout, stderr = yield from stdin.stream()
-            asyncio.async(copy_stream(stdout, self.stdin, linewise=True),
-                          loop=self.loop)
+            stdout, stderr = await stdin.stream()
+            asyncio.ensure_future(
+                copy_stream(stdout, self.stdin, linewise=True),
+                loop=self.loop)
 
 
 class ProcessSet(Process):
@@ -136,16 +132,14 @@ class ProcessSet(Process):
         kwargs['stdin'] = stdin
         return self.__class__(self.processes, **kwargs)
 
-    @asyncio.coroutine
-    def map(self, func, *args, **kwargs):
-        return (yield from asyncio.gather(
-            *[func(process, *args, **kwargs) for process in self.processes]))
+    async def map(self, func, *args, **kwargs):
+        return await asyncio.gather(
+            *[func(process, *args, **kwargs) for process in self.processes])
 
-    @asyncio.coroutine
-    def reduce(self, func, initializer=None):
-        return (yield from asyncio.gather(
+    async def reduce(self, func, initializer=None):
+        return await asyncio.gather(
             *[process.reduce(func, initializer)
-              for process in self.processes]))
+              for process in self.processes])
 
     @property
     def stdin(self):
@@ -163,17 +157,15 @@ class ProcessSet(Process):
             [process.stderr for process in self.processes])
 
     @property
-    @asyncio.coroutine
-    def returncode(self):
-        return all((yield from asyncio.gather(
-            *[process.returncode for process in self.processes])))
+    async def returncode(self):
+        return all(await asyncio.gather(
+            *[process.returncode for process in self.processes]))
 
-    @asyncio.coroutine
-    def exec_command(self, **kwargs):
+    async def exec_command(self, **kwargs):
         exec_kwargs = self.prepare_kwargs(**kwargs)
 
         for process in self.processes:
-            yield from process.exec_command(**exec_kwargs)
+            await process.exec_command(**exec_kwargs)
         self.running = True
 
-        yield from self.stream_stdin(kwargs.get('stdin'))
+        await self.stream_stdin(kwargs.get('stdin'))

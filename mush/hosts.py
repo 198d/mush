@@ -47,15 +47,13 @@ class BaseHost(UserDict):
 
         return data
 
-    @asyncio.coroutine
-    def connect(self):
+    async def connect(self):
         pass
 
     def disconnect(self):
         pass
 
-    @asyncio.coroutine
-    def exec_command(self, *args, **kwargs):
+    async def exec_command(self, *args, **kwargs):
         raise NotImplementedError()
 
     def tagged(self, tag, *values):
@@ -85,14 +83,13 @@ class BaseHost(UserDict):
 class LocalHost(BaseHost):
     connection = True
 
-    @asyncio.coroutine
-    def exec_command(self, command, **kwargs):
+    async def exec_command(self, command, **kwargs):
         self.logger.debug("Exec'ing command: %s", command)
 
         kwargs.setdefault('executable', pwd.getpwuid(os.getuid()).pw_shell)
 
-        return (yield from asyncio.create_subprocess_shell(
-            command, loop=self.loop, **kwargs))
+        return await asyncio.create_subprocess_shell(
+            command, loop=self.loop, **kwargs)
 
 
 class RemoteHost(BaseHost):
@@ -113,16 +110,15 @@ class RemoteHost(BaseHost):
                     ['{} {}'.format(option, value)
                      for option, value in ssh_options.items()])))
 
-    @asyncio.coroutine
-    def exec_command(self, command=None, **kwargs):
+    async def exec_command(self, command=None, **kwargs):
         ssh_options = kwargs.pop('ssh_options', [])
         command = self._ssh_command(args=[command or ''],
                                     options=ssh_options)
 
         self.logger.debug("Exec'ing command: %s", command)
 
-        return (yield from asyncio.create_subprocess_exec(
-            *command, loop=self.loop, **kwargs))
+        return await asyncio.create_subprocess_exec(
+            *command, loop=self.loop, **kwargs)
 
     def _ssh_command(self, options=[], args=[]):
         where = '{}@{}'.format(self.user, self.hostname)
@@ -144,15 +140,13 @@ class HostSet(BaseHost, UserList):
     def __repr__(self):
         return repr(self.data)
 
-    @asyncio.coroutine
-    def map(self, func, *args, **kwargs):
-        return (yield from asyncio.gather(
-            *[func(host, *args, **kwargs) for host in self]))
+    async def map(self, func, *args, **kwargs):
+        return await asyncio.gather(
+            *[func(host, *args, **kwargs) for host in self])
 
-    @asyncio.coroutine
-    def connect(self, *args):
-        return (yield from asyncio.gather(
-            *[host.connect(*args) for host in self]))
+    async def connect(self, *args):
+        return await asyncio.gather(
+            *[host.connect(*args) for host in self])
 
     def disconnect(self):
         return list(host.disconnect() for host in self)
