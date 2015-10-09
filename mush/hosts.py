@@ -83,12 +83,12 @@ class BaseHost(UserDict):
 class LocalHost(BaseHost):
     connection = True
 
-    async def exec_command(self, command, **kwargs):
+    def exec_command(self, command, **kwargs):
         self.logger.debug("Exec'ing command: %s", command)
 
         kwargs.setdefault('executable', pwd.getpwuid(os.getuid()).pw_shell)
 
-        return await asyncio.create_subprocess_shell(
+        return asyncio.create_subprocess_shell(
             command, loop=self.loop, **kwargs)
 
 
@@ -110,14 +110,15 @@ class RemoteHost(BaseHost):
                     ['{} {}'.format(option, value)
                      for option, value in ssh_options.items()])))
 
-    async def exec_command(self, command=None, **kwargs):
+
+    def exec_command(self, command=None, **kwargs):
         ssh_options = kwargs.pop('ssh_options', [])
         command = self._ssh_command(args=[command or ''],
                                     options=ssh_options)
 
         self.logger.debug("Exec'ing command: %s", command)
 
-        return await asyncio.create_subprocess_exec(
+        return asyncio.create_subprocess_exec(
             *command, loop=self.loop, **kwargs)
 
     def _ssh_command(self, options=[], args=[]):
