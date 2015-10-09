@@ -86,6 +86,9 @@ class MultiStreamReader:
                 current_tasks[index] = None
                 break
 
+        if not result_task.result() and self:
+            return await self.readline()
+
         return result_task.result()
 
 
