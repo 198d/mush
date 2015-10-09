@@ -97,13 +97,17 @@ class RemoteHost(BaseHost):
         'StrictHostKeyChecking': 'no'
     }
 
-    def __init__(self, user=None, hostname=None, meta=None, ssh_options=None,
-                 loop=None):
+    def __init__(self, user=None, hostname=None, meta=None, identity=None,
+                 ssh_options=None, loop=None):
         super().__init__(user=user, hostname=hostname, meta=meta, loop=loop)
 
         option_pairs = itertools.chain(self.default_ssh_options.items(),
                                        (ssh_options or {}).items())
         ssh_options = {option: value for option, value in option_pairs}
+
+        if identity:
+            ssh_options['IdentityFile'] = identity
+
         self.ssh_options = list(
             itertools.chain.from_iterable(
                 zip(['-o'] * len(ssh_options),
