@@ -55,6 +55,9 @@ class MultiStreamReader:
             return line
         raise StopAsyncIteration
 
+    def __iter__(self):
+        return iter(self.readers)
+
     def at_eof(self):
         return all([reader.at_eof() for reader in self.readers]) and \
             all([not any(tasks) for _, tasks in self.current_tasks.items()])
