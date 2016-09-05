@@ -9,8 +9,9 @@ from collections import UserDict, UserList
 from mush.processes import Process, ProcessSet
 
 
-class BaseHost(UserDict):
-    def __init__(self, user=None, hostname=None, meta=None, loop=None):
+class Host(UserDict):
+    def __init__(self, user=None, hostname=None, meta=None,
+                 loop=None, transport=None, **transport_kwargs):
         self.user = user or pwd.getpwuid(os.getuid()).pw_name
         self.hostname = hostname or 'localhost'
 
@@ -19,13 +20,16 @@ class BaseHost(UserDict):
         self.loop = (loop or asyncio.get_event_loop())
         self.logger = logging.getLogger(self.__class__.__module__)
 
+        if not transport:
+            transport = LocalhostTransport
+        self.transport = transport(self, **transport_kwargs)
+
     def __repr__(self):
         return '<{} {}@{} {}>'.format(self.__class__.__name__, self.user,
                                       self.hostname, repr(self.data))
 
-    def __call__(self, *args, **kwargs):
-        kwargs['loop'] = self.loop
-        return Process(self, *args, **kwargs)
+    def __call__(self, command, *args, **kwargs):
+        return Process(self, command.format(*args, **kwargs), loop=self.loop)
 
     def __getitem__(self, path):
         try:
@@ -53,8 +57,8 @@ class BaseHost(UserDict):
     def disconnect(self):
         pass
 
-    async def exec_command(self, *args, **kwargs):
-        raise NotImplementedError()
+    def exec_command(self, *args, **kwargs):
+        return self.transport.exec_command(*args, **kwargs)
 
     def tagged(self, tag, *values):
         if tag not in self:
@@ -80,26 +84,31 @@ class BaseHost(UserDict):
         return False
 
 
-class LocalHost(BaseHost):
+class BaseTransport:
+    def __init__(self, host, loop=None):
+        self.user = host.user
+        self.hostname = host.hostname
+        self.loop = (loop or asyncio.get_event_loop())
+        self.logger = logging.getLogger(self.__class__.__module__)
+
+
+class LocalhostTransport(BaseTransport):
     connection = True
 
     def exec_command(self, command, **kwargs):
         self.logger.debug("Exec'ing command: %s", command)
-
-        kwargs.setdefault('executable', pwd.getpwuid(os.getuid()).pw_shell)
-
-        return asyncio.create_subprocess_shell(
-            command, loop=self.loop, **kwargs)
+        return asyncio.create_subprocess_exec(
+            *['sudo', '-u', self.user, '-i', '--', command],
+            loop=self.loop, **kwargs)
 
 
-class RemoteHost(BaseHost):
+class OpenSSHTransport(BaseTransport):
     default_ssh_options = {
         'StrictHostKeyChecking': 'no'
     }
 
-    def __init__(self, user=None, hostname=None, meta=None, identity=None,
-                 ssh_options=None, loop=None):
-        super().__init__(user=user, hostname=hostname, meta=meta, loop=loop)
+    def __init__(self, host, identity=None, ssh_options=None, loop=None):
+        super().__init__(host, loop=loop)
 
         option_pairs = itertools.chain(self.default_ssh_options.items(),
                                        (ssh_options or {}).items())
@@ -111,7 +120,7 @@ class RemoteHost(BaseHost):
         self.ssh_options = list(
             itertools.chain.from_iterable(
                 zip(['-o'] * len(ssh_options),
-                    ['{} {}'.format(option, value)
+                    ['{}={}'.format(option, value)
                      for option, value in ssh_options.items()])))
 
 
@@ -131,7 +140,7 @@ class RemoteHost(BaseHost):
                 list(args))
 
 
-class HostSet(BaseHost, UserList):
+class HostSet(Host, UserList):
     def __init__(self, hosts, loop=None):
         UserList.__init__(self, hosts)
         self.loop = (loop or asyncio.get_event_loop())
@@ -173,3 +182,6 @@ class HostSet(BaseHost, UserList):
 
         return self.__class__(
             [host for host in self if safe_filter(host)], self.loop)
+
+
+localhost = Host(user=None, hostname='localhost')

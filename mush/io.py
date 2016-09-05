@@ -3,6 +3,31 @@ import random
 from concurrent import futures
 
 
+class skip_lines:
+    def __init__(self, reader, lines):
+        self.skip_lines = lines
+        self.current_line = 0
+        self.reader = getattr(reader, 'stdout', reader)
+
+    async def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        while self.current_line < self.skip_lines and \
+                not self.at_eof():
+            line = await self.readline()
+            self.current_line += 1
+        if self.at_eof():
+            raise StopAsyncIteration
+        return await self.reader.readline()
+
+    async def readline(self):
+        return await self.reader.readline()
+
+    def at_eof(self):
+        return self.reader.at_eof()
+
+
 async def copy_string(string, destination):
     destination.write(string.encode())
     await destination.drain()
@@ -16,6 +41,14 @@ async def copy_stream(source, destination, linewise=False):
             destination.write(await source.readline())
         else:
             destination.write(await source.read(4096))
+        await destination.drain()
+    destination.write_eof()
+    await destination.drain()
+
+
+async def copy_file(fileobj, destination, linewise=False):
+    for line in fileobj:
+        destination.write(line.encode())
         await destination.drain()
     destination.write_eof()
     await destination.drain()
